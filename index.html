@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>呼吸練習</title>
+<style>
+:root{--bg:#f3f6f8;--card:#fff;--ink:#1d2b36;--sub:#5b6b78;--in:#d6453d;--ex:#2f6fb5;--line:#d9e1e7}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;display:flex;justify-content:center;padding:16px}
+main{width:100%;max-width:440px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px}
+h1{font-size:1.25rem;margin:0 0 4px}
+.note{color:var(--sub);font-size:.85rem;margin:0 0 16px}
+.stage{height:240px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
+#orb{width:120px;height:120px;border-radius:50%;background:var(--line);transform:scale(.6);transition:transform 0s linear,background-color .3s}
+#orb.in{background:var(--in);transform:scale(1.7)}
+#orb.ex{background:var(--ex);transform:scale(.6)}
+#phase{font-size:1.6rem;font-weight:700;min-height:2.2rem}
+#phase.in{color:var(--in)}#phase.ex{color:var(--ex)}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+label{display:block;font-size:.95rem;font-weight:600;margin-bottom:4px}
+label.in{color:var(--in)}label.ex{color:var(--ex)}
+input,select,button{font:inherit;width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink)}
+button{cursor:pointer;font-weight:600}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #8bb8e8;outline-offset:1px}
+.btns{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin:14px 0}
+#go{background:#1d2b36;color:#fff;border-color:#1d2b36;font-size:1.1rem;padding:14px}
+#msg{min-height:1.4rem;font-size:.9rem;color:var(--in);margin:0 0 8px}
+#total{color:var(--sub);font-size:.9rem;text-align:center;min-height:1.3rem}
+footer{margin-top:14px;font-size:.75rem;color:var(--sub);text-align:center}
+@media (prefers-reduced-motion:reduce){#orb{transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+  <h1>呼吸練習</h1>
+  <p class="note">依照聲音與圓球的大小,練習放射治療時的吸氣與吐氣。</p>
+
+  <div class="stage" aria-live="polite">
+    <div id="orb"></div>
+    <div id="phase">準備</div>
+  </div>
+
+  <div class="row">
+    <div><label class="in" for="insec">吸氣秒數</label><input id="insec" type="number" inputmode="decimal" step="0.1" min="0.1"></div>
+    <div><label class="ex" for="exsec">吐氣秒數</label><input id="exsec" type="number" inputmode="decimal" step="0.1" min="0.1"></div>
+  </div>
+  <div><label for="voice">語音</label><select id="voice"></select></div>
+
+  <div class="btns">
+    <button id="go" type="button">開始</button>
+    <button id="clear" type="button">清除</button>
+  </div>
+  <p id="msg" role="alert"></p>
+  <div id="total"></div>
+
+  <footer>TVGH HITC</footer>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const orb = $('orb'), phaseEl = $('phase'), msg = $('msg');
+
+/* ---- 語音清單 ----
+   內建:瀏覽器語音合成(中文、英文)與嗶聲。
+   若同一網站放了 voice/voices.json,會一併載入院內錄好的音檔,格式:
+   [{"name":"台語","in":"voice/台語_in.wav","ex":"voice/台語_ex.wav"}] */
+const voices = [
+  {name:'中文', say:['吸氣','吐氣'], lang:'zh-TW'},
+  {name:'英文', say:['Breathe in','Breathe out'], lang:'en-US'},
+];
+fetch('voice/voices.json').then(r => r.ok ? r.json() : []).then(list => {
+  list.forEach(v => voices.push({name:v.name, files:[new Audio(v.in), new Audio(v.ex)]}));
+  fillVoices();
+}).catch(() => {});
+
+function fillVoices(keep){
+  $('voice').innerHTML = voices.map((v,i) => `<option value="${i}">${v.name}</option>`).join('');
+  if(keep != null) $('voice').value = keep;
+}
+fillVoices();
+
+/* ---- 發聲 ---- */
+let actx;
+function beep(freq){
+  actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.frequency.value = freq; o.connect(g); g.connect(actx.destination);
+  g.gain.setValueAtTime(.4, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(.001, actx.currentTime + .5);
+  o.start(); o.stop(actx.currentTime + .5);
+}
+function play(k){            // k: 0=吸氣, 1=吐氣
+  const v = voices[$('voice').value];
+  if(v.say){
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(v.say[k]);
+    u.lang = v.lang; u.rate = 1;
+    speechSynthesis.speak(u);
+  } else if(v.files){
+    v.files[k].currentTime = 0; v.files[k].play().catch(() => {});
+  } else beep(v.tone[k]);
+}
+
+/* ---- 主迴圈 ---- */
+let running = false, timer = null, wake = null;
+function setPhase(k, sec){
+  const cls = k ? 'ex' : 'in';
+  orb.style.transition = `transform ${sec}s linear, background-color .3s`;
+  orb.className = cls; phaseEl.className = cls;
+  phaseEl.textContent = k ? '吐氣' : '吸氣';
+  play(k);
+}
+function cycle(a, b){
+  if(!running) return;
+  setPhase(0, a);
+  timer = setTimeout(() => {
+    if(!running) return;
+    setPhase(1, b);
+    timer = setTimeout(() => cycle(a, b), b * 1000);
+  }, a * 1000);
+}
+async function start(){
+  const a = parseFloat($('insec').value), b = parseFloat($('exsec').value);
+  msg.textContent = '';
+  if(!(a > 0) || !(b > 0)){ msg.textContent = '請輸入吸氣與吐氣秒數'; return; }
+  if((a >= 10 || b >= 10) && !confirm('秒數有 10 秒以上,請確認有沒有輸錯?')) return;
+  running = true;
+  $('go').textContent = '暫停';
+  $('total').textContent = `一次呼吸 ${Math.round((a+b)*10)/10} 秒`;
+  ['insec','exsec','voice'].forEach(i => $(i).disabled = true);
+  try{ wake = await navigator.wakeLock?.request('screen'); }catch(e){}
+  if(actx && actx.state === 'suspended') actx.resume();
+  setTimeout(() => cycle(a, b), 500);
+}
+function stop(){
+  running = false; clearTimeout(timer); speechSynthesis.cancel();
+  voices.forEach(v => v.files && v.files.forEach(f => f.pause()));
+  orb.style.transition = 'transform .4s'; orb.className = ''; phaseEl.className = ''; phaseEl.textContent = '準備';
+  $('go').textContent = '開始';
+  ['insec','exsec','voice'].forEach(i => $(i).disabled = false);
+  wake?.release?.(); wake = null;
+}
+$('go').onclick = () => running ? stop() : start();
+$('clear').onclick = () => { stop(); $('insec').value = $('exsec').value = ''; $('total').textContent = ''; msg.textContent = ''; $('voice').selectedIndex = 0; };
+
+/* ---- 連結帶參數:breath.html?in=4&ex=6&voice=中文 (可做成 QR code 發給病人) ---- */
+const q = new URLSearchParams(location.search);
+if(q.get('in')) $('insec').value = q.get('in');
+if(q.get('ex')) $('exsec').value = q.get('ex');
+if(q.get('voice')){ const i = voices.findIndex(v => v.name === q.get('voice')); if(i >= 0) $('voice').value = i; }
+</script>
+</body>
+</html>
