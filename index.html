@@ -62,44 +62,32 @@ const $ = id => document.getElementById(id);
 const orb = $('orb'), phaseEl = $('phase'), msg = $('msg');
 
 /* ---- 語音清單 ----
-   內建:瀏覽器語音合成(中文、英文)與嗶聲。
-   若同一網站放了 voice/voices.json,會一併載入院內錄好的音檔,格式:
-   [{"name":"台語","in":"voice/台語_in.wav","ex":"voice/台語_ex.wav"}] */
-const voices = [
-  {name:'中文', say:['吸氣','吐氣'], lang:'zh-TW'},
-  {name:'英文', say:['Breathe in','Breathe out'], lang:'en-US'},
-];
+   所有語音都來自 voice/voices.json,格式:
+   [{"name":"台語","in":"voice/taiwanese_in.wav","ex":"voice/taiwanese_ex.wav"}] */
+const voices = [];
+const q = new URLSearchParams(location.search);
 fetch('voice/voices.json').then(r => r.ok ? r.json() : []).then(list => {
-  list.forEach(v => voices.push({name:v.name, files:[new Audio(v.in), new Audio(v.ex)]}));
+  list.forEach(v => {
+    const a = new Audio(v.in), b = new Audio(v.ex);
+    a.preload = b.preload = 'auto';
+    voices.push({name:v.name, files:[a, b]});
+  });
   fillVoices();
-}).catch(() => {});
+  const i = voices.findIndex(v => v.name === q.get('voice'));
+  if(i >= 0) $('voice').value = i;
+  if(!voices.length) msg.textContent = '語音檔尚未載入,請重新整理頁面';
+}).catch(() => { msg.textContent = '語音檔尚未載入,請重新整理頁面'; });
 
 function fillVoices(keep){
   $('voice').innerHTML = voices.map((v,i) => `<option value="${i}">${v.name}</option>`).join('');
   if(keep != null) $('voice').value = keep;
 }
-fillVoices();
-
 /* ---- 發聲 ---- */
-let actx;
-function beep(freq){
-  actx = actx || new (window.AudioContext || window.webkitAudioContext)();
-  const o = actx.createOscillator(), g = actx.createGain();
-  o.frequency.value = freq; o.connect(g); g.connect(actx.destination);
-  g.gain.setValueAtTime(.4, actx.currentTime);
-  g.gain.exponentialRampToValueAtTime(.001, actx.currentTime + .5);
-  o.start(); o.stop(actx.currentTime + .5);
-}
 function play(k){            // k: 0=吸氣, 1=吐氣
   const v = voices[$('voice').value];
-  if(v.say){
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(v.say[k]);
-    u.lang = v.lang; u.rate = 1;
-    speechSynthesis.speak(u);
-  } else if(v.files){
-    v.files[k].currentTime = 0; v.files[k].play().catch(() => {});
-  } else beep(v.tone[k]);
+  if(!v) return;
+  v.files[k].currentTime = 0;
+  v.files[k].play().catch(() => {});
 }
 
 /* ---- 主迴圈 ---- */
@@ -123,18 +111,23 @@ function cycle(a, b){
 async function start(){
   const a = parseFloat($('insec').value), b = parseFloat($('exsec').value);
   msg.textContent = '';
+  if(!voices.length){ msg.textContent = '語音檔尚未載入,請重新整理頁面'; return; }
   if(!(a > 0) || !(b > 0)){ msg.textContent = '請輸入吸氣與吐氣秒數'; return; }
   if((a >= 10 || b >= 10) && !confirm('秒數有 10 秒以上,請確認有沒有輸錯?')) return;
   running = true;
+  // 在點擊當下先解鎖音檔,避免 iPhone 擋掉之後由計時器觸發的播放
+  voices.forEach(v => v.files.forEach(f => {
+    f.muted = true;
+    f.play().then(() => { f.pause(); f.currentTime = 0; f.muted = false; }).catch(() => { f.muted = false; });
+  }));
   $('go').textContent = '暫停';
   $('total').textContent = `一次呼吸 ${Math.round((a+b)*10)/10} 秒`;
   ['insec','exsec','voice'].forEach(i => $(i).disabled = true);
   try{ wake = await navigator.wakeLock?.request('screen'); }catch(e){}
-  if(actx && actx.state === 'suspended') actx.resume();
   setTimeout(() => cycle(a, b), 500);
 }
 function stop(){
-  running = false; clearTimeout(timer); speechSynthesis.cancel();
+  running = false; clearTimeout(timer);
   voices.forEach(v => v.files && v.files.forEach(f => f.pause()));
   orb.style.transition = 'transform .4s'; orb.className = ''; phaseEl.className = ''; phaseEl.textContent = '準備';
   $('go').textContent = '開始';
@@ -145,10 +138,8 @@ $('go').onclick = () => running ? stop() : start();
 $('clear').onclick = () => { stop(); $('insec').value = $('exsec').value = ''; $('total').textContent = ''; msg.textContent = ''; $('voice').selectedIndex = 0; };
 
 /* ---- 連結帶參數:breath.html?in=4&ex=6&voice=中文 (可做成 QR code 發給病人) ---- */
-const q = new URLSearchParams(location.search);
 if(q.get('in')) $('insec').value = q.get('in');
 if(q.get('ex')) $('exsec').value = q.get('ex');
-if(q.get('voice')){ const i = voices.findIndex(v => v.name === q.get('voice')); if(i >= 0) $('voice').value = i; }
 </script>
 </body>
 </html>
