@@ -5,7 +5,7 @@
     "ex": "voice/中文_ex.wav"
   },
   {
-    "name": "英文",
+    "name": "English",
     "in": "voice/英文_in.wav",
     "ex": "voice/英文_ex.wav"
   }
